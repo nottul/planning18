@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Planning - Connexion</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+  <style>
+    body { font-family: sans-serif; background: #f5f5f5; margin: 0; padding: 0; }
+    .container { width: 100%; margin: 0 auto; display: flex; gap: 5px; overflow-x: auto; }
+    .side-column, .planning-area { background: #fff; padding: 0.5rem; border-radius: 8px; box-shadow: 0 0 8px rgba(0,0,0,0.1); }
+    .side-column { width: 140px; min-width: 140px; flex-shrink: 0; }
+    .planning-area { flex-grow: 1; overflow-x: auto; }
+    .planning-grid { display: table; width: 100%; border-collapse: separate; border-spacing: 3px; table-layout: fixed; }
+    .planning-row { display: table-row; width: 100%; }
+    .header, .row-label, .cell { display: table-cell; position: relative; box-sizing: border-box; overflow: hidden; }
+    .header { font-weight: bold; background: #3f51b5; color: white; text-align: center; padding: 6px; border-radius: 5px; width: 175px; font-size: 0.85em; }
+    .planning-row .header:first-child { width: 60px; min-width: 60px; max-width: 60px; padding: 2px; font-size: 0.75em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .row-label { background: #f0f0f0; padding: 3px; text-align: center; font-weight: bold; border-radius: 5px; width: 60px; min-width: 60px; max-width: 60px; cursor: pointer; font-size: 0.75em; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; height: auto; min-height: 50px; }
+    .row-label:hover { background: #e0e0e0; }
+    .cell { background: #e9e9e9; min-height: 120px; border-radius: 6px; padding: 4px; width: 175px; vertical-align: top; font-size: 0.85em; }
+    .cell-content { display: flex; flex-direction: row; height: 100%; min-height: 120px; width: 100%; }
+    .resizer { display: none; }
+    .zone { padding: 4px; margin: 0 2px; border: 1px dashed #aaa; border-radius: 4px; background: #fafafa; flex: 1; min-height: 120px; overflow-y: auto; width: calc(50% - 4px); }
+    .zone.livraison { background: #e3f2fd; }
+    .zone.enlevement { background: #ffe0b2; }
+    .operation { padding: 4px 6px; background: white; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 4px; font-size: 0.85em; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .operation:hover { background: #f5f5f5; }
+    .tournee { border: 2px solid #3f51b5; padding: 4px; margin-bottom: 10px; border-radius: 4px; background: #f5f5f5; width: calc(100% - 10px); }
+    .tournee-title { font-size: 0.75em; color: #3f51b5; margin-bottom: 4px; font-weight: bold; }
+    .hidden { display: none; }
+    .login-container { max-width: 400px; margin: 4rem auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    input, button { width: 100%; margin: 0.5rem 0; padding: 10px; font-size: 1rem; }
+    button { background: #3f51b5; color: white; border: none; cursor: pointer; border-radius: 4px; }
+    .nav-buttons { display: flex; justify-content: space-between; margin-bottom: 1rem; }
+    .nav-buttons button { width: auto; padding: 8px 16px; }
+    .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); }
+    .modal-content { background-color: #fefefe; margin: 15% auto; padding: 20px; border: 1px solid #888; border-radius: 8px; width: 60%; max-width: 600px; }
+    .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+    .close:hover, .close:focus { color: black; text-decoration: none; }
+    .modal-row { margin-bottom: 10px; display: flex; }
+    .modal-label { font-weight: bold; width: 150px; }
+    .modal-value { flex: 1; }
+    .fade-transition { transition: opacity 0.3s ease-in-out; }
+    .fade-out { opacity: 0; }
+    .fade-in { opacity: 1; }
+    .dragover { background-color: #e0f7fa !important; border: 2px dashed #0288d1 !important; }
+    .operation.moving { opacity: 0.4; background-color: #e0f7fa; }
+    .drop-indicator { height: 2px; background-color: #0288d1; margin: 2px 0; }
+    .pending-container { min-height: 100px; padding: 4px; border: 1px dashed #ccc; border-radius: 4px; margin-top: 5px; }
+    .pending-container.dragover { background-color: #e3f2fd; border-color: #2196f3; }
+  </style>
+</head>
+<body>
+  <div id="login-screen" class="login-container">
+    <h2>Connexion</h2>
+    <input type="email" id="email" placeholder="Email" />
+    <input type="password" id="password" placeholder="Mot de passe" />
+    <button onclick="app.login()">Se connecter</button>
+  </div>
+
+  <div id="app-screen" class="hidden">
+    <div class="container">
+      <div class="side-column">
+        <h2>Livraisons</h2>
+        <div id="livraisons-pending" class="pending-container"></div>
+      </div>
+
+      <div class="planning-area">
+        <h2>Planning hebdomadaire</h2>
+        <div class="nav-buttons">
+          <button onclick="app.navigateDay('previous-week')">Semaine précédente</button>
+          <button onclick="app.navigateDay(-1)">Jour précédent</button>
+          <button id="weekend-toggle" onclick="app.toggleWeekends()">Afficher week-ends</button>
+          <button onclick="app.navigateDay(1)">Jour suivant</button>
+          <button onclick="app.navigateDay('next-week')">Semaine suivante</button>
+        </div>
+        <div class="planning-grid fade-transition" id="planning"></div>
+      </div>
+
+      <div class="side-column">
+        <h2>Enlèvements</h2>
+        <div id="enlevements-pending" class="pending-container"></div>
+      </div>
+    </div>
+  </div>
+  
+  <div id="detailsModal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="app.closeModal()">&times;</span>
+      <h3 id="modalTitle">Détails</h3>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
+  <script>
+    // Application principale - Pattern Module pour encapsulation
+    const app = (function() {
+      // Configuration Supabase
+      const { createClient } = supabase;
+      const supabaseClient = createClient(
+        'https://nmyynehpbeyqztmiwifh.supabase.co',
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5teXluZWhwYmV5cXp0bWl3aWZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzkzOTMxMDksImV4cCI6MjA1NDk2OTEwOX0.uSwpw_7_LERd8njVKc5b-wGnMI5esSw0rchtYksyBWg'
+      );
+      
+      // État de l'application
+      const state = {
+        currentStartDate: null,
+        showWeekends: false,
+        draggedElement: null,
+        dragSourceParent: null,
+        dragSourceTournee: null,
+        draggingWithinTournee: false,
+        dropIndicator: null,
+        cachedData: {
+          chauffeurs: null,
+          livraisons: null,
+          enlevements: null
+        }
+      };
+      
+      // Cache pour les données
+      async function fetchData(refresh = false) {
+        if (refresh || !state.cachedData.chauffeurs) {
+          state.cachedData.chauffeurs = (await supabaseClient.from('chauffeurs').select('*').eq('actif', true)).data;
+        }
+        if (refresh || !state.cachedData.livraisons) {
+          state.cachedData.livraisons = (await supabaseClient.from('livraisons').select('*')).data;
+        }
+        if (refresh || !state.cachedData.enlevements) {
+          state.cachedData.enlevements = (await supabaseClient.from('enlevements').select('*')).data;
+        }
+        return state.cachedData;
+      }
+      
+      // Fonctions utilitaires
+      function getCurrentWeekMonday() {
+        const today = new Date();
+        const day = today.getDay();
+        const diff = day === 0 ? 6 : day - 1;
+        const monday = new Date(today);
+        monday.setDate(today.getDate() - diff);
+        monday.setHours(0, 0, 0, 0);
+        return monday;
+      }
+      
+      function formatDate(date) {
+        const day = date.getDate().toString().padStart(2, '0');
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        const year = date.getFullYear().toString().substr(2);
+        return `${day}-${month}-${year}`;
+      }
+      
+      function formatISODate(date) {
+        return date.toISOString().split('T')[0];
+      }
+      
+      function generateTourneeId() {
+        return 'T' + Math.floor(Math.random() * 1000);
+      }
+      
+      // Gestion du redimensionnement
+      function adjustColumnWidths() {
+        const planningArea = document.querySelector('.planning-area');
+        if (!planningArea) return;
+        
+        const availableWidth = planningArea.clientWidth;
+        const chauffeurWidth = 60;
+        const dayColumns = state.showWeekends ? 7 : 5;
+        
+        let dayColumnWidth = Math.floor((availableWidth - chauffeurWidth) / dayColumns);
+        dayColumnWidth = Math.max(150, Math.min(190, dayColumnWidth));
+        
+        const targetWidth = 175;
+        if (Math.abs(dayColumnWidth - targetWidth) < 10) {
+          dayColumnWidth = targetWidth;
+        }
+        
+        document.querySelectorAll('.planning-row .header:not(:first-child)').forEach(header => {
+          header.style.width = `${dayColumnWidth}px`;
+        });
+        
+        document.querySelectorAll('.planning-row:not(:first-child) .cell').forEach(cell => {
+          cell.style.width = `${dayColumnWidth}px`;
+        });
+      }
+      
+      // Gestion Drag & Drop
+      function setupDragEvents(element, type, id, tourneeId, data) {
+        element.draggable = true;
+        element.dataset.id = id;
+        element.dataset.type = type;
+        if (tourneeId) element.dataset.tourneeId = tourneeId;
+        if (data) element.dataset.details = JSON.stringify(data);
+        
+        element.onclick = function(e) {
+          if (state.draggedElement) return;
+          showDetails(this);
+          e.stopPropagation();
+        };
+        
+        element.ondragstart = e => {
+          e.stopPropagation();
+          state.draggedElement = element;
+          state.dragSourceParent = element.parentElement;
+          
+          if (element.parentElement && element.parentElement.classList.contains('tournee')) {
+            state.dragSourceTournee = element.parentElement;
+            state.draggingWithinTournee = true;
+            element.classList.add('moving');
+          } else {
+            state.draggingWithinTournee = false;
+          }
+          
+          setTimeout(() => { element.style.opacity = '0.4'; }, 0);
+          e.dataTransfer.effectAllowed = 'move';
+        };
+        
+        element.ondragend = e => {
+          element.style.opacity = '1';
+          element.classList.remove('moving');
+          removeDropIndicator();
+          state.draggingWithinTournee = false;
+        };
+      }
+      
+      function setupPendingContainers() {
+        const containers = [
+          { id: 'livraisons-pending', type: 'livraison' },
+          { id: 'enlevements-pending', type: 'enlevement' }
+        ];
+        
+        containers.forEach(({ id, type }) => {
+          const container = document.getElementById(id);
+          
+          container.ondragover = e => {
+            e.preventDefault();
+            if (state.draggedElement && state.draggedElement.dataset.type === type) {
+              container.classList.add('dragover');
+            }
+          };
+          
+          container.ondragleave = e => {
+            container.classList.remove('dragover');
+          };
+          
+          container.ondrop = e => {
+            e.preventDefault();
+            container.classList.remove('dragover');
+            
+            if (state.draggedElement && state.draggedElement.dataset.type === type) {
+              removeFromPlanningToWaiting(state.draggedElement);
+            }
+          };
+        });
+      }
+      
+      function setupDropZone(zone, chauffeurId, date, type) {
+        zone.dataset.chauffeurId = chauffeurId;
+        zone.dataset.date = date;
+        zone.dataset.type = type;
+        
+        zone.ondragover = e => {
+          e.preventDefault();
+          handleDragOver(e, zone);
+        };
+        
+        zone.ondragenter = e => {
+          handleDragEnter(e, zone);
+        };
+        
+        zone.ondragleave = e => {
+          handleDragLeave(e, zone);
+        };
+        
+        zone.ondrop = e => {
+          e.preventDefault();
+          handleDrop(e, zone, chauffeurId, date, type);
+        };
+      }
+      
+      function handleDragOver(e, zoneElement) {
+        e.preventDefault();
+        
+        if (state.draggingWithinTournee && state.draggedElement && state.dragSourceTournee) {
+          const tourneeInThisZone = zoneElement.querySelector(`.tournee[data-tournee-id="${state.dragSourceTournee.dataset.tourneeId}"]`);
+          
+          if (tourneeInThisZone) {
+            const operations = Array.from(tourneeInThisZone.querySelectorAll('.operation:not(.moving)'));
+            
+            if (operations.length > 0) {
+              const mouseY = e.clientY;
+              let closestOp = null;
+              let closestDistance = Infinity;
+              let insertBefore = true;
+              
+              for (const op of operations) {
+                const rect = op.getBoundingClientRect();
+                const opMiddle = rect.top + rect.height / 2;
+                const distance = Math.abs(mouseY - opMiddle);
+                
+                if (distance < closestDistance) {
+                  closestDistance = distance;
+                  closestOp = op;
+                  insertBefore = mouseY < opMiddle;
+                }
+              }
+              
+              if (closestOp) {
+                updateDropIndicator(closestOp, insertBefore);
+              }
+            }
+          }
+        }
+      }
+      
+      function handleDragEnter(e, zoneElement) {
+        if (!state.draggedElement) return;
+        
+        if (state.draggingWithinTournee) {
+          return;
+        }
+        
+        if (state.draggedElement.dataset.type === zoneElement.dataset.type) {
+          zoneElement.classList.add('dragover');
+        }
+      }
+      
+      function handleDragLeave(e, zoneElement) {
+        zoneElement.classList.remove('dragover');
+        
+        if (state.draggingWithinTournee) {
+          removeDropIndicator();
+        }
+      }
+      
+      function updateDropIndicator(targetElement, insertBefore) {
+        removeDropIndicator();
+        
+        state.dropIndicator = document.createElement('div');
+        state.dropIndicator.className = 'drop-indicator';
+        
+        if (insertBefore) {
+          targetElement.parentNode.insertBefore(state.dropIndicator, targetElement);
+        } else {
+          targetElement.parentNode.insertBefore(state.dropIndicator, targetElement.nextSibling);
+        }
+      }
+      
+      function removeDropIndicator() {
+        if (state.dropIndicator && state.dropIndicator.parentNode) {
+          state.dropIndicator.parentNode.removeChild(state.dropIndicator);
+        }
+        state.dropIndicator = null;
+      }
+      
+      // Gestion des tournées
+      function findTourneeById(cellElement, tourneeId) {
+        const zones = cellElement.querySelectorAll('.zone');
+        for (const zone of zones) {
+          const tournee = zone.querySelector(`.tournee[data-tournee-id="${tourneeId}"]`);
+          if (tournee) return { tournee, zone };
+        }
+        return null;
+      }
+      
+      function findOrCreateTournee(cellElement, tourneeId = null) {
+        if (tourneeId) {
+          const result = findTourneeById(cellElement, tourneeId);
+          if (result) return result;
+        }
+        
+        const newTourneeId = tourneeId || generateTourneeId();
+        const zoneL = cellElement.querySelector('.zone.livraison');
+        const zoneE = cellElement.querySelector('.zone.enlevement');
+        
+        const tourneeL = document.createElement('div');
+        tourneeL.className = 'tournee';
+        tourneeL.dataset.tourneeId = newTourneeId;
+        tourneeL.innerHTML = `<div class="tournee-title">Tournée ${newTourneeId}</div>`;
+        zoneL.appendChild(tourneeL);
+        
+        const tourneeE = document.createElement('div');
+        tourneeE.className = 'tournee';
+        tourneeE.dataset.tourneeId = newTourneeId;
+        tourneeE.innerHTML = `<div class="tournee-title">Tournée ${newTourneeId}</div>`;
+        zoneE.appendChild(tourneeE);
+        
+        return { 
+          livraison: { tournee: tourneeL, zone: zoneL },
+          enlevement: { tournee: tourneeE, zone: zoneE }
+        };
+      }
+      
+      // Création d'éléments
+      function createOp(label, type, id, tourneeId = null, data = null) {
+        const div = document.createElement('div');
+        div.className = 'operation';
+        div.textContent = label;
+        
+        // Configurer les événements drag & drop
+        setupDragEvents(div, type, id, tourneeId, data);
+        
+        return div;
+      }
+      
+      // Gestion base de données
+      async function updatePositionInDatabase(id, type, position) {
+        const table = type === 'livraison' ? 'livraisons' : 'enlevements';
+        
+        try {
+          const { error } = await supabaseClient.from(table)
+            .update({ position: position })
+            .eq('id', id);
+            
+          if (error) {
+            console.error(`Erreur lors de la mise à jour de la position de ${type} ${id}:`, error);
+          }
+        } catch (error) {
+          console.error('Erreur:', error);
+        }
+      }
+      
+      // Gestion du déplacement des opérations
+      async function handleDrop(e, targetZone, chauffeurId, date, zoneType) {
+        e.preventDefault();
+        targetZone.classList.remove('dragover');
+        removeDropIndicator();
+        
+        if (!state.draggedElement) return;
+        
+        const id = state.draggedElement.dataset.id;
+        const type = state.draggedElement.dataset.type;
+        const tourneeIdOriginal = state.draggedElement.dataset.tourneeId;
+        const label = state.draggedElement.textContent;
+        const details = state.draggedElement.dataset.details ? JSON.parse(state.draggedElement.dataset.details) : null;
+        
+        // 1. Gestion du réordonnancement interne à une tournée
+        if (state.draggingWithinTournee && tourneeIdOriginal) {
+          const tourneeInThisZone = targetZone.querySelector(`.tournee[data-tournee-id="${tourneeIdOriginal}"]`);
+          
+          if (tourneeInThisZone && type === zoneType) {
+            let newPosition = 0;
+            const operations = Array.from(tourneeInThisZone.querySelectorAll('.operation'));
+            
+            if (state.dropIndicator && state.dropIndicator.parentNode === tourneeInThisZone) {
+              const index = Array.from(tourneeInThisZone.children).indexOf(state.dropIndicator);
+              newPosition = index;
+            } else {
+              newPosition = operations.length;
+            }
+            
+            if (state.dragSourceParent) {
+              state.dragSourceParent.removeChild(state.draggedElement);
+            }
+            
+            if (newPosition < tourneeInThisZone.children.length) {
+              tourneeInThisZone.insertBefore(state.draggedElement, tourneeInThisZone.children[newPosition]);
+            } else {
+              tourneeInThisZone.appendChild(state.draggedElement);
+            }
+            
+            await updatePositionInDatabase(id, type, newPosition);
+            
+            state.draggedElement = null;
+            state.dragSourceParent = null;
+            state.dragSourceTournee = null;
+            state.draggingWithinTournee = false;
+            return;
+          }
+        }
+        
+        // 2. Vérification compatibilité type/zone
+        if (type !== zoneType) {
+          return;
+        }
+        
+        // 3. Gestion ajout/déplacement à une tournée
+        const cell = targetZone.closest('.cell');
+        
+        const originalParent = state.draggedElement.parentElement;
+        const originalTournee = originalParent && originalParent.classList.contains('tournee') ? originalParent : null;
+        const originalContainer = originalTournee ? originalTournee.parentElement : null;
+        
+        if (originalParent) {
+          originalParent.removeChild(state.draggedElement);
+        }
+        
+        let existingTournees = Array.from(targetZone.querySelectorAll('.tournee'));
+        let targetTournee;
+        let tourneeId;
+        
+        if (existingTournees.length > 0) {
+          targetTournee = existingTournees[existingTournees.length - 1];
+          if (state.dropIndicator) {
+            for (const tournee of existingTournees) {
+              if (tournee.contains(state.dropIndicator)) {
+                targetTournee = tournee;
+                break;
+              }
+            }
+          }
+          tourneeId = targetTournee.dataset.tourneeId;
+        } else {
+          tourneeId = generateTourneeId();
+          const tournees = findOrCreateTournee(cell, tourneeId);
+          targetTournee = type === 'livraison' ? tournees.livraison.tournee : tournees.enlevement.tournee;
+        }
+        
+        // Nettoyer la tournée d'origine si elle est vide
+        if (originalTournee && originalTournee.querySelectorAll('.operation').length === 0) {
+          if (originalContainer) {
+            originalContainer.removeChild(originalTournee);
+            
+            const otherZoneType = originalContainer.dataset.type === 'livraison' ? 'enlevement' : 'livraison';
+            const otherZone = cell.querySelector(`.zone.${otherZoneType}`);
+            
+            if (otherZone) {
+              const otherTournee = otherZone.querySelector(`.tournee[data-tournee-id="${originalTournee.dataset.tourneeId}"]`);
+              if (otherTournee && otherTournee.querySelectorAll('.operation').length === 0) {
+                otherZone.removeChild(otherTournee);
+              }
+            }
+          }
+        }
+        
+        // Récupérer les informations du chauffeur
+        let numero_chauffeur = '';
+        try {
+          const { data, error } = await supabaseClient.from('chauffeurs')
+            .select('numero_chauffeur')
+            .eq('id', chauffeurId)
+            .single();
+            
+          if (!error && data) {
+            numero_chauffeur = data.numero_chauffeur;
+          }
+        } catch (error) {
+          console.error('Erreur:', error);
+        }
+        
+        // Mettre à jour les détails
+        if (details) {
+          details.numero_chauffeur = numero_chauffeur;
+          if (type === 'livraison') {
+            details.date_livraison = date;
+          } else {
+            details.date_enlevement = date;
+          }
+        }
+        
+        // Créer une nouvelle instance de l'opération
+        const newOp = createOp(label, type, id, tourneeId, details);
+        
+        // Ajouter l'opération à la tournée
+        targetTournee.appendChild(newOp);
+        
+        // Mettre à jour la base de données
+        const update = {
+          statut: 'planifie',
+          tournee_id: tourneeId,
+          chauffeur_id: chauffeurId,
+          numero_chauffeur: numero_chauffeur,
+          position: targetTournee.querySelectorAll('.operation').length
+        };
+        
+        update[type === 'livraison' ? 'date_livraison' : 'date_enlevement'] = date;
+        
+        try {
+          const { error } = await supabaseClient.from(type === 'livraison' ? 'livraisons' : 'enlevements')
+            .update(update)
+            .eq('id', id);
+            
+          if (error) {
+            console.error('Erreur:', error);
+            return;
+          }
+          
+          // Créer la tournée dans l'autre zone si nécessaire
+          if (!originalTournee && targetTournee) {
+            const otherZoneType = zoneType === 'livraison' ? 'enlevement' : 'livraison';
+            const otherZone = cell.querySelector(`.zone.${otherZoneType}`);
+            
+            if (otherZone) {
+              const otherTournee = otherZone.querySelector(`.tournee[data-tournee-id="${tourneeId}"]`);
+              if (!otherTournee) {
+                const newTournee = document.createElement('div');
+                newTournee.className = 'tournee';
+                newTournee.dataset.tourneeId = tourneeId;
+                newTournee.innerHTML = `<div class="tournee-title">Tournée ${tourneeId}</div>`;
+                otherZone.appendChild(newTournee);
+              }
+            }
+          }
+          
+          // Mettre à jour le cache
+          await fetchData(true);
+        } catch (error) {
+          console.error('Erreur:', error);
+        }
+        
+        // Réinitialiser les variables
+        state.draggedElement = null;
+        state.dragSourceParent = null;
+        state.dragSourceTournee = null;
+        state.draggingWithinTournee = false;
+      }
+      
+      // Gestion des opérations en attente
+      async function removeFromPlanningToWaiting(operationElement) {
+        if (!operationElement) return;
+        
+        const id = operationElement.dataset.id;
+        const type = operationElement.dataset.type;
+        const label = operationElement.textContent;
+        
+        let details = null;
+        try {
+          if (operationElement.dataset.details) {
+            details = JSON.parse(operationElement.dataset.details);
+          }
+        } catch (error) {
+          console.error('Erreur lors du parsing des détails:', error);
+        }
+        
+        // Obtenir les références à la tournée avant suppression
+        const tournee = operationElement.closest('.tournee');
+        const tourneeId = tournee ? tournee.dataset.tourneeId : null;
+        const zone = tournee ? tournee.closest('.zone') : null;
+        const cell = zone ? zone.closest('.cell') : null;
+        
+        // Mettre à jour dans la base de données
+        const table = type === 'livraison' ? 'livraisons' : 'enlevements';
+        const update = {
+          statut: 'en_attente',
+          tournee_id: null,
+          chauffeur_id: null,
+          numero_chauffeur: null,
+          position: null
+        };
+        
+        // Réinitialiser la date
+        update[type === 'livraison' ? 'date_livraison' : 'date_enlevement'] = null;
+        
+        try {
+          const { error } = await supabaseClient.from(table)
+            .update(update)
+            .eq('id', id);
+            
+          if (error) {
+            console.error(`Erreur lors de la remise en attente:`, error);
+            return;
+          }
+          
+          // Mettre à jour les détails
+          if (details) {
+            details.statut = 'en_attente';
+            details.tournee_id = null;
+            details.chauffeur_id = null;
+            details.numero_chauffeur = null;
+            details.position = null;
+            
+            if (type === 'livraison') {
+              details.date_livraison = null;
+            } else {
+              details.date_enlevement = null;
+            }
+          }
+          
+          // Ajouter l'opération dans la colonne d'attente
+          const pendingContainer = document.getElementById(`${type}s-pending`);
+          const newOp = createOp(label, type, id, null, details);
+          pendingContainer.appendChild(newOp);
+          
+          // Supprimer de la tournée
+          if (tournee && operationElement.parentElement) {
+            operationElement.parentElement.removeChild(operationElement);
+            
+            // Supprimer la tournée si vide
+            if (tournee.querySelectorAll('.operation').length === 0) {
+              if (zone) {
+                zone.removeChild(tournee);
+                
+                // Supprimer aussi la tournée correspondante dans l'autre zone si vide
+                if (cell && tourneeId) {
+                  const otherZoneType = zone.dataset.type === 'livraison' ? 'enlevement' : 'livraison';
+                  const otherZone = cell.querySelector(`.zone.${otherZoneType}`);
+                  
+                  if (otherZone) {
+                    const otherTournee = otherZone.querySelector(`.tournee[data-tournee-id="${tourneeId}"]`);
+                    if (otherTournee && otherTournee.querySelectorAll('.operation').length === 0) {
+                      otherZone.removeChild(otherTournee);
+                    }
+                  }
+                }
+              }
+            }
+          }
+          
+          // Mise à jour du cache
+          await fetchData(true);
+          
+          // Réinitialiser les variables si nécessaire
+          if (state.draggedElement === operationElement) {
+            state.draggedElement = null;
+            state.dragSourceParent = null;
+            state.dragSourceTournee = null;
+            state.draggingWithinTournee = false;
+          }
+        } catch (error) {
+          console.error('Erreur:', error);
+        }
+      }
+      
+      // Affichage des détails
+      function showDetails(element) {
+        const modal = document.getElementById('detailsModal');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalContent = document.getElementById('modalContent');
+        
+        // Déterminer le type d'opération
+        const type = element.dataset.type;
+        const title = type === 'livraison' ? 'Détail de la livraison' : 'Détail de l\'enlèvement';
+        
+        modalTitle.textContent = title;
+        modalContent.innerHTML = '';
+        
+        // Récupérer les détails
+        let details = {};
+        try {
+          if (element.dataset.details) {
+            details = JSON.parse(element.dataset.details);
+          }
+        } catch (error) {
+          console.error('Erreur lors du parsing des détails:', error);
+        }
+        
+        // Formater la date
+        let dateValue = '';
+        if (type === 'livraison' && details.date_livraison) {
+          const dateParts = details.date_livraison.split('-');
+          if (dateParts.length === 3) {
+            dateValue = `${dateParts[2]}-${dateParts[1]}-${dateParts[0].substring(2)}`;
+          } else {
+            dateValue = details.date_livraison;
+          }
+        } else if (type === 'enlevement' && details.date_enlevement) {
+          const dateParts = details.date_enlevement.split('-');
+          if (dateParts.length === 3) {
+            dateValue = `${dateParts[2]}-${dateParts[1]}-${dateParts[0].substring(2)}`;
+          } else {
+            dateValue = details.date_enlevement;
+          }
+        } else {
+          dateValue = 'Non planifiée';
+        }
+        
+        // Construire les champs à afficher
+        const fields = [
+          { label: 'Client', value: details.nom_client || element.textContent },
+          { label: 'Adresse', value: details.adresse || 'Non spécifiée' },
+          { label: 'Chauffeur', value: details.numero_chauffeur || 'Non assigné' },
+          { label: 'Date', value: dateValue },
+          { label: 'Tournée', value: element.dataset.tourneeId || 'Aucune' },
+          { label: 'Statut', value: details.statut || 'Inconnu' }
+        ];
+        
+        // Ajouter des champs spécifiques au type
+        if (type === 'livraison') {
+          fields.push({ label: 'Détails', value: details.details_livraison || 'Aucun détail' });
+        } else {
+          fields.push({ label: 'Détails', value: details.details_enlevement || 'Aucun détail' });
+        }
+        
+        // Générer les lignes de la modal
+        fields.forEach(field => {
+          const row = document.createElement('div');
+          row.className = 'modal-row';
+          
+          const label = document.createElement('div');
+          label.className = 'modal-label';
+          label.textContent = field.label + ' :';
+          
+          const value = document.createElement('div');
+          value.className = 'modal-value';
+          value.textContent = field.value;
+          
+          row.appendChild(label);
+          row.appendChild(value);
+          modalContent.appendChild(row);
+        });
+        
+        modal.style.display = 'block';
+      }
+      
+      // Affichage des détails d'un chauffeur
+      async function showChauffeurDetails(chauffeur) {
+        const modal = document.getElementById('detailsModal');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalContent = document.getElementById('modalContent');
+        
+        modalTitle.textContent = 'Détails du chauffeur';
+        modalContent.innerHTML = '';
+        
+        // Récupérer des informations complètes
+        let chauffeurDetails = chauffeur;
+        
+        try {
+          const { data, error } = await supabaseClient.from('chauffeurs')
+            .select('*')
+            .eq('id', chauffeur.id)
+            .single();
+            
+          if (!error && data) {
+            chauffeurDetails = data;
+          }
+        } catch (error) {
+          console.error('Erreur lors de la récupération des détails:', error);
+        }
+        
+        // Construire les champs à afficher
+        const fields = [
+          { label: 'Numéro', value: chauffeurDetails.numero_chauffeur || 'Non spécifié' },
+          { label: 'Nom complet', value: chauffeurDetails.nom_complet || 'Non spécifié' },
+          { label: 'Prénom', value: chauffeurDetails.prenom || 'Non spécifié' },
+          { label: 'Rôle', value: chauffeurDetails.role || 'Non spécifié' },
+          { label: 'Dépôt', value: chauffeurDetails.depot || 'Non spécifié' }
+        ];
+        
+        // Générer le HTML pour chaque champ
+        fields.forEach(field => {
+          const row = document.createElement('div');
+          row.className = 'modal-row';
+          
+          const label = document.createElement('div');
+          label.className = 'modal-label';
+          label.textContent = field.label + ' :';
+          
+          const value = document.createElement('div');
+          value.className = 'modal-value';
+          value.textContent = field.value;
+          
+          row.appendChild(label);
+          row.appendChild(value);
+          modalContent.appendChild(row);
+        });
+        
+        modal.style.display = 'block';
+      }
+      
+      // Gestion de la modal
+      function closeModal() {
+        document.getElementById('detailsModal').style.display = 'none';
+      }
+      
+      // Fonctions principales de l'application
+      async function loadPlanning() {
+        const planning = document.getElementById('planning');
+        planning.innerHTML = '';
+      
+        // Générer les dates selon le flag showWeekends
+        const daysToShow = state.showWeekends ? 7 : 5;
+        const days = [...Array(daysToShow)].map((_, i) => {
+          const date = new Date(state.currentStartDate);
+          date.setDate(state.currentStartDate.getDate() + i);
+          return {
+            displayDate: formatDate(date),
+            isoDate: formatISODate(date),
+            dateObj: new Date(date)
+          };
+        });
+        
+        // Assurer le redimensionnement après génération
+        setTimeout(adjustColumnWidths, 100);
+      
+        // Récupérer les données
+        const { chauffeurs, livraisons, enlevements } = await fetchData();
+      
+        // Créer l'en-tête
+        const headerRow = document.createElement('div');
+        headerRow.className = 'planning-row';
+        
+        const chauffeurHeader = document.createElement('div');
+        chauffeurHeader.className = 'header';
+        chauffeurHeader.textContent = 'Ch.';
+        headerRow.appendChild(chauffeurHeader);
+      
+        // Ajouter les en-têtes des jours
+        days.forEach(day => {
+          const dayHeader = document.createElement('div');
+          dayHeader.className = 'header';
+          dayHeader.textContent = day.displayDate;
+          headerRow.appendChild(dayHeader);
+        });
+        
+        planning.appendChild(headerRow);
+      
+        // Créer les lignes par chauffeur
+        chauffeurs.forEach(ch => {
+          const row = document.createElement('div');
+          row.className = 'planning-row';
+          
+          // Créer le label du chauffeur
+          const label = document.createElement('div');
+          label.className = 'row-label';
+          
+          const nameDiv = document.createElement('div');
+          nameDiv.textContent = ch.nom_complet;
+          
+          const prenomDiv = document.createElement('div');
+          prenomDiv.textContent = ch.prenom || '';
+          prenomDiv.style.fontSize = '0.85em';
+          
+          const numDiv = document.createElement('div');
+          numDiv.textContent = ch.numero_chauffeur || '';
+          numDiv.style.fontSize = '0.85em';
+          numDiv.style.color = '#666';
+          
+          label.appendChild(nameDiv);
+          label.appendChild(prenomDiv);
+          label.appendChild(numDiv);
+          
+          label.dataset.chauffeurId = ch.id;
+          label.onclick = function() {
+            showChauffeurDetails(ch);
+          };
+          row.appendChild(label);
+      
+          // Créer les cellules pour chaque jour
+          days.forEach(day => {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            
+            const cellContent = document.createElement('div');
+            cellContent.className = 'cell-content';
+      
+            // Créer les deux zones (livraison et enlèvement)
+            const zoneL = document.createElement('div');
+            zoneL.className = 'zone livraison';
+            setupDropZone(zoneL, ch.id, day.isoDate, 'livraison');
+      
+            const zoneE = document.createElement('div');
+            zoneE.className = 'zone enlevement';
+            setupDropZone(zoneE, ch.id, day.isoDate, 'enlevement');
+      
+            // Structure des tournées
+            const tourneesMap = new Map();
+            
+            // Ajouter les livraisons aux tournées
+            livraisons
+              .filter(l => l.chauffeur_id === ch.id && l.date_livraison === day.isoDate)
+              .forEach(l => {
+                if (!tourneesMap.has(l.tournee_id)) {
+                  tourneesMap.set(l.tournee_id, { livraisons: [], enlevements: [] });
+                }
+                tourneesMap.get(l.tournee_id).livraisons.push(l);
+              });
+            
+            // Ajouter les enlèvements aux tournées
+            enlevements
+              .filter(e => e.chauffeur_id === ch.id && e.date_enlevement === day.isoDate)
+              .forEach(e => {
+                if (!tourneesMap.has(e.tournee_id)) {
+                  tourneesMap.set(e.tournee_id, { livraisons: [], enlevements: [] });
+                }
+                tourneesMap.get(e.tournee_id).enlevements.push(e);
+              });
+            
+            // Créer les éléments de tournée
+            tourneesMap.forEach((operations, tid) => {
+              // Créer la tournée côté livraison si nécessaire
+              if (operations.livraisons.length > 0) {
+                const tourneeLiv = document.createElement('div');
+                tourneeLiv.className = 'tournee';
+                tourneeLiv.dataset.tourneeId = tid;
+                tourneeLiv.innerHTML = `<div class="tournee-title">Tournée ${tid}</div>`;
+                
+                // Ajouter les opérations
+                operations.livraisons.forEach(op => {
+                  const opElement = createOp(op.nom_client, 'livraison', op.id, tid, op);
+                  tourneeLiv.appendChild(opElement);
+                });
+                
+                zoneL.appendChild(tourneeLiv);
+              }
+              
+              // Créer la tournée côté enlèvement si nécessaire
+              if (operations.enlevements.length > 0) {
+                const tourneeEnl = document.createElement('div');
+                tourneeEnl.className = 'tournee';
+                tourneeEnl.dataset.tourneeId = tid;
+                tourneeEnl.innerHTML = `<div class="tournee-title">Tournée ${tid}</div>`;
+                
+                // Ajouter les opérations
+                operations.enlevements.forEach(op => {
+                  const opElement = createOp(op.nom_client, 'enlevement', op.id, tid, op);
+                  tourneeEnl.appendChild(opElement);
+                });
+                
+                zoneE.appendChild(tourneeEnl);
+              }
+            });
+      
+            // Assembler la cellule
+            cellContent.appendChild(zoneL);
+            cellContent.appendChild(zoneE);
+            cell.appendChild(cellContent);
+            
+            row.appendChild(cell);
+          });
+          
+          planning.appendChild(row);
+        });
+      
+        // Charger les opérations en attente
+        const pendingContainers = {
+          livraison: document.getElementById('livraisons-pending'),
+          enlevement: document.getElementById('enlevements-pending')
+        };
+        
+        // Vider les conteneurs
+        pendingContainers.livraison.innerHTML = '';
+        pendingContainers.enlevement.innerHTML = '';
+        
+        // Trier et ajouter les livraisons en attente
+        const livraisonsEnAttente = livraisons
+          .filter(l => l.statut === 'en_attente')
+          .sort((a, b) => a.nom_client.localeCompare(b.nom_client));
+        
+        livraisonsEnAttente.forEach(l => {
+          pendingContainers.livraison.appendChild(createOp(l.nom_client, 'livraison', l.id, null, l));
+        });
+        
+        // Trier et ajouter les enlèvements en attente
+        const enlevementsEnAttente = enlevements
+          .filter(e => e.statut === 'en_attente')
+          .sort((a, b) => a.nom_client.localeCompare(b.nom_client));
+        
+        enlevementsEnAttente.forEach(e => {
+          pendingContainers.enlevement.appendChild(createOp(e.nom_client, 'enlevement', e.id, null, e));
+        });
+      }
+      
+      // Navigation dans le planning
+      function navigateDay(direction) {
+        // Animation de transition
+        const planningElement = document.getElementById('planning');
+        planningElement.classList.add('fade-out');
+        
+        setTimeout(() => {
+          // Calculer la nouvelle date
+          const newDate = new Date(state.currentStartDate);
+          
+          if (direction === 'previous-week') {
+            newDate.setDate(state.currentStartDate.getDate() - 7);
+          } else if (direction === 'next-week') {
+            newDate.setDate(state.currentStartDate.getDate() + 7);
+          } else {
+            newDate.setDate(state.currentStartDate.getDate() + direction);
+          }
+          
+          state.currentStartDate = newDate;
+          loadPlanning();
+          
+          // Animation de retour
+          setTimeout(() => {
+            planningElement.classList.remove('fade-out');
+            adjustColumnWidths();
+          }, 50);
+        }, 300);
+      }
+      
+      // Basculer l'affichage des week-ends
+      function toggleWeekends() {
+        state.showWeekends = !state.showWeekends;
+        
+        // Mettre à jour le texte du bouton
+        const weekendButton = document.getElementById('weekend-toggle');
+        weekendButton.textContent = state.showWeekends ? 'Masquer week-ends' : 'Afficher week-ends';
+        
+        // Recharger le planning
+        loadPlanning();
+      }
+      
+      // Initialisation de l'application
+      function initializePlanning() {
+        // Définir la date de début
+        state.currentStartDate = getCurrentWeekMonday();
+        
+        // Charger le planning
+        loadPlanning();
+        setupPendingContainers();
+        
+        // Mettre à jour le texte du bouton weekend
+        const weekendButton = document.getElementById('weekend-toggle');
+        if (weekendButton) {
+          weekendButton.textContent = state.showWeekends ? 'Masquer week-ends' : 'Afficher week-ends';
+        }
+        
+        // Écouter les clics en dehors de la modal
+        window.onclick = function(event) {
+          const modal = document.getElementById('detailsModal');
+          if (event.target === modal) {
+            modal.style.display = 'none';
+          }
+        };
+      }
+      
+      // Connexion utilisateur
+      async function login() {
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        
+        const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+        
+        if (error) {
+          alert('Erreur de connexion');
+        } else {
+          document.getElementById('login-screen').classList.add('hidden');
+          document.getElementById('app-screen').classList.remove('hidden');
+          initializePlanning();
+        }
+      }
+      
+      // API Publique
+      return {
+        login,
+        navigateDay,
+        toggleWeekends,
+        closeModal
+      };
+    })();
+    
+    // Initialisation au chargement
+    window.addEventListener('load', adjustColumnWidths);
+    window.addEventListener('resize', adjustColumnWidths);
+    
+    // Fonction utilitaire globale pour ajuster les colonnes
+    function adjustColumnWidths() {
+      // Déléguer au module app s'il est initialisé
+      if (app && app.adjustColumnWidths) {
+        app.adjustColumnWidths();
+      }
+    }
+  </script>
+</body>
+</html>
